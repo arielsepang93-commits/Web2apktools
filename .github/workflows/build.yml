@@ -1,0 +1,87 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'App Name'
+        required: true
+      app_url:
+        description: 'Website URL'
+        required: true
+      package_name:
+        description: 'Package Name'
+        required: true
+      icon_url:
+        description: 'Icon URL (opsional)'
+        required: false
+      permissions:
+        description: 'Permissions (pisah pakai koma)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Replace nama app
+        run: |
+          sed -i "s|__APP_NAME__|${{ github.event.inputs.app_name }}|g" app/src/main/AndroidManifest.xml
+          sed -i "s|__APP_NAME__|${{ github.event.inputs.app_name }}|g" app/src/main/res/values/strings.xml
+
+      - name: Replace URL
+        run: |
+          sed -i "s|__APP_URL__|${{ github.event.inputs.app_url }}|g" app/src/main/java/com/ariel/webapp/MainActivity.java
+
+      - name: Replace package name
+        run: |
+          sed -i "s|__PACKAGE_NAME__|${{ github.event.inputs.package_name }}|g" app/build.gradle
+
+      - name: Set permissions
+        run: |
+          PERMS="${{ github.event.inputs.permissions }}"
+          if [ -z "$PERMS" ]; then exit 0; fi
+          IFS=',' read -ra ARR <<< "$PERMS"
+          LINES=""
+          for p in "${ARR[@]}"; do
+            p=$(echo $p | xargs)
+            [ -z "$p" ] && continue
+            LINES="$LINES    <uses-permission android:name=\"android.permission.$p\" />\n"
+          done
+          sed -i "s|<!-- __PERMISSIONS__ -->|$LINES|g" app/src/main/AndroidManifest.xml
+
+      - name: Download icon kalau ada
+        if: ${{ github.event.inputs.icon_url != '' }}
+        run: |
+          curl -L -o /tmp/icon.png "${{ github.event.inputs.icon_url }}"
+          FILE=$(file /tmp/icon.png)
+          echo "$FILE"
+          if echo "$FILE" | grep -q "PNG image"; then
+            cp /tmp/icon.png app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          fi
+
+      - name: Grant execute
+        run: chmod +x gradlew
+
+      - name: Build APK
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Rename APK
+        run: |
+          NAME="${{ github.event.inputs.app_name }}"
+          NAME=$(echo "$NAME" | tr ' ' '_' | tr -cd 'A-Za-z0-9_-')
+          mv app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/${NAME}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-build
+          path: app/build/outputs/apk/release/*.apk
